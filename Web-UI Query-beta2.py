@@ -16,7 +16,7 @@ except Exception as e:
 #     ...
 
 # تابع برای ساخت کوئری AQL بر اساس فیلترها
-def build_aql_query(name, gender, medical_condition, insurance_provider, medication, test_results):
+def build_aql_query(name, gender, medical_condition,doctor_name, insurance_provider, medication, test_results):
     # شروع کوئری پایه
     query = "FOR patient IN patients "
     
@@ -58,6 +58,17 @@ def build_aql_query(name, gender, medical_condition, insurance_provider, medicat
         FILTER prescription._to == drug._id AND drug.name == @medication
         """
         bind_vars["medication"] = medication
+    if doctor_name:
+        # این کوئری فرعی، بیمارانی را پیدا می‌کند که پزشکی با نام مشابه برایشان نسخه ثبت کرده باشد
+        filters.append("""
+            patient._id IN (
+                FOR p IN prescriptions
+                    LET doc = DOCUMENT(p.doctor_id)
+                    FILTER LIKE(doc.name, @doctor_name)
+                    RETURN p._from
+            )
+        """)
+        bind_vars['doctor_name'] = f"%{doctor_name}%"
 
     # اضافه کردن فیلترها به کوئری
     if filters:
@@ -76,10 +87,18 @@ def build_aql_query(name, gender, medical_condition, insurance_provider, medicat
     # """ if medication and medication != "همه" else "null"
 
     query += f"""
+    LET doctor_name = FIRST(
+        FOR p IN prescriptions
+            FILTER p._from == patient._id
+            LIMIT 1
+            LET doc = DOCUMENT(p.doctor_id)
+            RETURN doc.name
+    )
     RETURN {{
         name: patient.name,
         age: patient.age,
         gender: patient.gender,
+        doctor: doctor_name,
         medical_condition: patient.medical_condition,
         insurance_provider: patient.insurance_provider,
         medication: patient.medication,
@@ -94,14 +113,14 @@ def build_aql_query(name, gender, medical_condition, insurance_provider, medicat
     return query, bind_vars
 
 # تابع رابط کاربری برای فیلترها
-def gradio_interface(name, gender, medical_condition, insurance_provider, medication, test_results):
+def gradio_interface(name, gender, medical_condition,doctor_name, insurance_provider, medication, test_results):
     # --- FIX 3: Centralized and improved query execution and error handling ---
     if db is None:
         # Handle case where initial DB connection failed
         print("Database connection is not available.")
         return pd.DataFrame() # Return an empty dataframe
 
-    query, bind_vars = build_aql_query(name, gender, medical_condition, insurance_provider, medication, test_results)
+    query, bind_vars = build_aql_query(name, gender, medical_condition,doctor_name,insurance_provider, medication, test_results)
     
     try:
         # Execute the query directly here
@@ -126,28 +145,42 @@ medical_condition_options = ["همه", "Cancer", "Obesity", "Diabetes", "Asthma"
 insurance_provider_options = ["همه", "Blue Cross", "Medicare", "Aetna", "Cigna", "UnitedHealthcare"]
 medication_options = ["همه", "Paracetamol", "Ibuprofen", "Aspirin", "Penicillin", "Lipitor"]
 test_results_options = ["همه", "Normal", "Abnormal", "Inconclusive"]
-
+rtl_css = """
+    #rtl_container { direction: rtl; }
+#rtl_container .gradio-row { flex-direction: row-reverse !important; }
+#rtl_container .gr-form > .gr-block > .label, #rtl_container .label { text-align: right !important; }
+#rtl_container .gr-form { text-align: right; }
+#rtl_container input::placeholder, #rtl_container textarea::placeholder { text-align: right; }
+#rtl_container input, #rtl_container textarea { text-align: right; }
+#rtl_container .multiselect__single, #rtl_container .multiselect__input { text-align: right !important; }
+#rtl_container th, #rtl_container td { text-align: right !important; }
+    """
 # ایجاد رابط کاربری با Gradio
-with gr.Blocks() as demo:
-    gr.Markdown("# رابط کاربری وب برای مدیریت بیمارستان")
-    gr.Markdown("فیلترهای زیر را پر کنید تا داده‌های مورد نظر از دیتابیس بیمارستان استخراج شود.")
+with gr.Blocks(css=rtl_css, elem_id="rtl_container") as demo:
+    gr.Markdown("""<div style="direction:rtl;text-align: right;"> 
+                <h1>رابط کاربری وب برای مدیریت بیمارستان</h1>
+               </div> """)
+    gr.Markdown("""<div style="direction:rtl;text-align:right;">
+                <p>فیلترهای زیر را پر کنید تا داده‌های مورد نظر از دیتابیس بیمارستان استخراج شود</p>
+                </div>""" )    
+    with gr.Column(elem_classes=["rtl"]):
+        with gr.Row():
+            name_input = gr.Textbox(label="نام بیمار (یا بخشی از آن)", placeholder="مثال: Bobby")
+            gender_input = gr.Dropdown(label="جنسیت", choices=gender_options, value="همه")
+            medical_condition_input = gr.Dropdown(label="نوع بیماری", choices=medical_condition_options, value="همه")
     
-    with gr.Row():
-        name_input = gr.Textbox(label="نام بیمار (یا بخشی از آن)", placeholder="مثال: Bobby")
-        gender_input = gr.Dropdown(label="جنسیت", choices=gender_options, value="همه")
-        medical_condition_input = gr.Dropdown(label="نوع بیماری", choices=medical_condition_options, value="همه")
+        with gr.Row():
+            insurance_provider_input = gr.Dropdown(label="شرکت بیمه", choices=insurance_provider_options, value="همه")
+            medication_input = gr.Dropdown(label="نام دارو", choices=medication_options, value="همه")
+            doctor_input = gr.Textbox(label="پزشک معالج",placeholder="نام دکتر")
+            test_results_input = gr.Dropdown(label="نتایج آزمایش", choices=test_results_options, value="همه")
     
-    with gr.Row():
-        insurance_provider_input = gr.Dropdown(label="شرکت بیمه", choices=insurance_provider_options, value="همه")
-        medication_input = gr.Dropdown(label="نام دارو", choices=medication_options, value="همه")
-        test_results_input = gr.Dropdown(label="نتایج آزمایش", choices=test_results_options, value="همه")
+        submit_button = gr.Button("جستجو")
+        output = gr.Dataframe(label="نتایج جستجو")
     
-    submit_button = gr.Button("جستجو")
-    output = gr.Dataframe(label="نتایج جستجو")
-    
-    submit_button.click(
+        submit_button.click(
         fn=gradio_interface,
-        inputs=[name_input, gender_input, medical_condition_input, insurance_provider_input, medication_input, test_results_input],
+        inputs=[name_input, gender_input, medical_condition_input,doctor_input, insurance_provider_input, medication_input, test_results_input],
         outputs=output
     )
 
