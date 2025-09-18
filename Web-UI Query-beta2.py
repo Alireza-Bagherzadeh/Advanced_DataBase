@@ -36,7 +36,7 @@ def build_aql_query(name, gender, medical_condition,doctor_name, insurance_provi
     
     # افزودن فیلتر بیماری
     if medical_condition and medical_condition != "همه":
-        filters.append(f'patient.Medical_Condition == @medical_condition')
+        filters.append(f'patient.medical_condition == @medical_condition')
         bind_vars['medical_condition'] = medical_condition
     
     # افزودن فیلتر بیمه
